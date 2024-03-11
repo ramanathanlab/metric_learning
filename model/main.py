@@ -49,8 +49,8 @@ class MetricModel(L.LightningModule):
         self.total_samples=0 # counter for num_samples for validation
         self.batch_counter=0
 
-        self.alignment_tot=0
-        self.uniformity_tot=0
+        self.alignment_tot = torch.tensor(0)
+        self.uniformity_tot = torch.tensor(0)
 
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
@@ -83,11 +83,15 @@ class MetricModel(L.LightningModule):
         match_y = y.unsqueeze(1)==y.unsqueeze(0)
         pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
         pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
+
         pos_embed = self.model(pos)
         anchor_embed = self.model(anchor)
 
+        self.alignment_tot=self.alignment_tot.type_as(pos_embed)
+        self.uniformity_tot=self.uniformity_tot.type_as(anchor_embed)
+
         self.alignment_tot += get_alignment(pos_embed, anchor_embed)
-        self.uniformity_tot += get_uniformity(anchor_embed)
+        # self.uniformity_tot += get_uniformity(anchor_embed)
 
 
     def on_validation_epoch_end(self):
@@ -112,16 +116,19 @@ class MetricModel(L.LightningModule):
 
         # calculate alignment and uniformity 
         # for alignment, we need two embeddings that we know are similar aka x and y are positive pairs that we know exist
-        match_y = y.unsqueeze(1)==y.unsqueeze(0)
-        pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
-        pos, anchor = X[pos_pairs_idx[0]]
-        pos_embed = self.model(pos)
-        anchor_embed = self.model(anchor)
+        # match_y = y.unsqueeze(1)==y.unsqueeze(0)
+        # pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
+        # pos, anchor = X[pos_pairs_idx[0]]
+        # pos_embed = self.model(pos)
+        # anchor_embed = self.model(anchor)
 
-        alignment = get_alignment(pos_embed, anchor_embed)
-        self.log_dict({'Alignment:': alignment}, prog_bar=True)
-        uniformity = get_uniformity(anchor_embed)
-        self.log_dict({'Uniformity:': uniformity}, prog_bar=True)
+        # alignment = get_alignment(pos_embed, anchor_embed)
+        self.log_dict({'Alignment:': self.alignment_tot/len(self.val_dataset)}, prog_bar=True)
+        # uniformity = get_uniformity(anchor_embed)
+        self.log_dict({'Uniformity:': self.uniformity_tot/len(self.val_dataset)}, prog_bar=True)
+
+        self.alignment_tot = 0
+        self.uniformit_tot = 0
 
         # pearsons need gold labels for ranking what 0, 1, 2, 3, 4, 5 in terms of cosine similarity 
         # we need to see if cosing similarity of projected embeddings correlate with ranking of similarity
