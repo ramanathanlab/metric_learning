@@ -17,6 +17,25 @@ from utils import plot_embeddings, SVD, get_alignment, get_uniformity
 from dataset import ProxyDataset, Metric_Dataset
 from models import MetricNet
 from sklearn.decomposition import TruncatedSVD
+
+# import CrossEntropyLoss
+
+def SimCSE_Loss(temp:int): 
+    temp = 10
+    h = -2*torch.randn(batch_size, 3, feature_dim)+1  # (batch dim, contrastive triplet, features dim)
+    num = torch.exp(F.cosine_similarity(h[:, 0, :], h[:, 1, :], dim=1) / temp)
+
+    norm_hi = torch.sqrt(torch.sum(torch.square(h[:, 0, :]), dim=1))
+    norm_hj_plus = torch.sqrt(torch.sum(torch.square(h[:, 1, :]), dim=1))
+    norm_hj_minus = torch.sqrt(torch.sum(torch.square(h[:, 2, :]), dim=1))
+    sim_denom1 = torch.outer(norm_hi, norm_hj_plus) * temp
+    sim_denom2 = torch.outer(norm_hi, norm_hj_minus) * temp
+    v1 = h[:, 0, :] @ h[:, 1, :].t() / sim_denom1
+    v2 = h[:, 0, :] @ h[:, 2, :].t() / sim_denom2
+    vec_denom = torch.sum(torch.exp(v1) + torch.exp(v2), dim=1)
+    return 
+
+
     
 class MetricModel(L.LightningModule):
     def __init__(self,
@@ -50,7 +69,9 @@ class MetricModel(L.LightningModule):
         self.batch_counter=0
 
         self.alignment_tot = torch.tensor(0)
-        self.uniformity_tot = torch.tensor(0)
+        self.alignment = []
+        # self.uniformity_tot = torch.tensor(0)
+        # self.alignment_tot=[]
 
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
@@ -58,17 +79,14 @@ class MetricModel(L.LightningModule):
 
         X, y = batch  
 
-        q, a, p, n = batch # question label, anchor/question, pos/sim_doc, neg/diff_doc
-        a_embed = self.model(a)
-        p_embed = self.model(p)
-        n_embed = self.model(n)
+        X = model(X)
 
         # cat all embeddings by batch, and generate their ref indices
         # from: https://github.com/KevinMusgrave/pytorch-metric-learning/issues/686
-        embeddings=torch.cat([a_embed, p_embed, n_embed], dim=0)
-        a_idx = torch.arange(0, self.batch_size).type_as(a).long()
-        p_idx = torch.arange(self.batch_size, self.batch_size*2).type_as(p).long()
-        n_idx = torch.arange(self.batch_size*2, self.batch_size*3).type_as(n).long()
+        # embeddings=torch.cat([a_embed, p_embed, n_embed], dim=0)
+
+
+
         loss = self.loss_fn(embeddings, indices_tuple=(a_idx, p_idx, n_idx)) # loss calculated via embed + corr. idx
 
         self.manual_backward(loss) 
@@ -88,8 +106,11 @@ class MetricModel(L.LightningModule):
         anchor_embed = self.model(anchor)
 
         self.alignment_tot=self.alignment_tot.type_as(pos_embed)
-        self.uniformity_tot=self.uniformity_tot.type_as(anchor_embed)
+        # self.uniformity_tot=self.uniformity_tot.type_as(anchor_embed)
 
+
+        self.alignment.append(get_alignment(pos_embed, anchor_embed))
+    
         self.alignment_tot += get_alignment(pos_embed, anchor_embed)
         # self.uniformity_tot += get_uniformity(anchor_embed)
 
@@ -97,14 +118,16 @@ class MetricModel(L.LightningModule):
     def on_validation_epoch_end(self):
         # get all a, p, n
         half_size = int(len(self.val_dataset)*0.5)
-        X, y = self.val_dataset[:half_size]
+        X, y = self.val_dataset[:half_size] # grab half of the dataset
+        X = X.type_as(next(self.model.parameters()))
+        y = y.type_as(next(self.model.parameters()))
         # umap_labels = np.array([0]*len(self.val_dataset) + [1]*len(self.val_dataset) + [2]*len(self.val_dataset))
         umap_labels = np.array(y.detach().cpu())
-        embeddings = self.model(X)
-        embeddings = embeddings.type_as(next(self.model.parameters()))
-        proj_embeddings = self.model(embeddings)
-        proj_embeddings = proj_embeddings.detach().cpu().numpy()
-        umap_embeddings = umapper.fit_transform(proj_embeddings)
+        # embeddings = self.model(X)
+        # embeddings = embeddings.type_as(next(self.model.parameters()))
+        proj_embeddings = self.model(X)
+        # proj_embeddings = proj_embeddings.detach().cpu().numpy()
+        umap_embeddings = umapper.fit_transform(proj_embeddings.detach().cpu().numpy())
         wandb_image_umap = plot_embeddings(umap_embeddings, umap_labels, self.current_epoch)
         self.logger.experiment.log({f'UMAP-Plot':wandb_image_umap})
 
@@ -125,15 +148,15 @@ class MetricModel(L.LightningModule):
         # alignment = get_alignment(pos_embed, anchor_embed)
         self.log_dict({'Alignment:': self.alignment_tot/len(self.val_dataset)}, prog_bar=True)
         # uniformity = get_uniformity(anchor_embed)
-        self.log_dict({'Uniformity:': self.uniformity_tot/len(self.val_dataset)}, prog_bar=True)
+        # self.log_dict({'Uniformity:': self.uniformity_tot/len(self.val_dataset)}, prog_bar=True)
 
-        self.alignment_tot = 0
-        self.uniformit_tot = 0
+        self.alignment_tot *= 0
+        self.alignment=[]
+        # self.alignment_tot = 0
+        # self.uniformit_tot = 0
 
         # pearsons need gold labels for ranking what 0, 1, 2, 3, 4, 5 in terms of cosine similarity 
         # we need to see if cosing similarity of projected embeddings correlate with ranking of similarity
-
-
 
         # IDEA: since we are just evaluating on mean average precision
         # for "classifying" if nearest neighbor is correct, we can create 3 synthetic classes
@@ -145,9 +168,9 @@ class MetricModel(L.LightningModule):
         # accuracies = self.accuracy_calculator.get_accuracy(
         #     val_embeddings, val_labels, train_embeddings, train_labels, False
         # )
-        avg_correct=self.dist_correct/self.total_samples*100
-        self.log('val_avg_correct', avg_correct)
-        print(f"Acc of negative pair identification: {avg_correct} %")
+        # avg_correct=self.dist_correct/self.total_samples*100
+        # self.log('val_avg_correct', avg_correct)
+        # print(f"Acc of negative pair identification: {avg_correct} %")
         self.dist_correct=0
         self.total_samples=0
         self.batch_counter=0

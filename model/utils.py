@@ -65,13 +65,14 @@ def plot_embeddings(umap_embeddings:np.array,
 def SVD(features_tensor:torch.tensor):
     # Step 2: Compute Singular Value Decomposition (SVD)
     U, S, V = torch.svd(features_tensor)
-    S_normalized = S / S.max()
+    S_normalized = (S / S.max()).mean()
     # Step 3: Plot the singular values
-    plt.plot(S_normalized.numpy())
+    plt.plot(S_normalized.cpu().numpy())
     plt.title('Singular Value Distribution')
     plt.xlabel('Singular Value Index')
     plt.ylabel('Singular Value')
-    return S_normalized, plt
+    wandb_image_svd=wandb.Image(plt)
+    return S_normalized, wandb_image_svd
 
 
 def get_most_labels(train_labels:list, 
@@ -133,19 +134,6 @@ def get_classification_accuracies(confusion_matrix:torch.Tensor,
         if label_id in class_accuracies_dict:
             mapped_class_accuracies_dict[label_name] = class_accuracies_dict[label_id]
     return mapped_class_accuracies_dict
-
-def plot_embeddings(umap_embeddings:np.array, 
-                    test_labels:list, 
-                    label_map:dict, 
-                    epoch:int) -> wandb.Image:
-    plt.figure(figsize=(10, 8))
-    plt.scatter(umap_embeddings[:, 0], umap_embeddings[:, 1], c=test_labels, cmap='Spectral', s=5)
-    cbar = plt.colorbar(boundaries=np.arange(len(np.unique(test_labels))+1)-0.5)
-    cbar.set_ticks(np.array(np.arange(len(np.unique(test_labels)))))
-    cbar.ax.set_yticklabels([v for k, v in label_map.items() if k in test_labels]) # [k for k, v in label_map.items() if v in test_labels]
-    plt.title(f'UMAP Projection of the Embeddings, Epoch: {epoch}', fontsize=24)
-    wandb_image = wandb.Image(plt)
-    return wandb_image
 
 def visualizer_hook(umapper, umap_embeddings, labels, split_name, keyname, *args):
     logging.info(

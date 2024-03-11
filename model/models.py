@@ -33,7 +33,6 @@ class DropoutLayer(nn.Module):
             return x * dropout_mask.type_as(x)
         return x
 
-##### Blocks and Sub-units #####
 class ResidualBlock(nn.Module):
     def __init__(self, input_size:int, block_pattern:list,
                  output_size:int, batch_norm:bool, activation:str):
