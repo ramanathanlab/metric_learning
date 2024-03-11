@@ -92,7 +92,7 @@ class MetricConfig(BaseModel):
 
 class Config(BaseConfig): 
     # data configurations 
-    data_path:str='./'
+    data_path:str='/lambda_stor/homes/bhsu/gb_2024/my_gb_files/metric_learn/data/arxiv_emb_processed_multi.parquet'
     num_samples:int=10000
     batch_size:int=64
     train_ratio:float=0.8

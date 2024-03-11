@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 from config import Config, BaseConfig
 import pandas as pd, numpy as np
 from pyarrow.parquet import ParquetFile
+from config import MetricConfig
+import pyarrow as pa, os
 
 class ProxyDataset(L.LightningDataModule): 
     def __init__(self, 
@@ -61,18 +63,14 @@ class ProxyDataset(L.LightningDataModule):
 
 class Metric_Dataset(L.LightningDataModule): 
     def __init__(self, 
-                 data_path: str, 
-                 num_samples:int, 
-                 train_ratio:float, 
-                 val_ratio:float, 
-                 batch_size:int
+                 cfg:MetricConfig
                  ): 
         super(Metric_Dataset, self).__init__()
-        self.data_path = data_path 
-        self.num_samples = num_samples 
-        self.train_ratio = train_ratio
-        self.val_ratio = val_ratio
-        self.batch_size = batch_size
+        self.data_path = cfg.data_path 
+        self.num_samples = cfg.num_samples 
+        self.train_ratio = cfg.train_ratio
+        self.val_ratio = cfg.val_ratio
+        self.batch_size = cfg.batch_size
         self.num_workers = int(os.cpu_count() * 0.7)
 
     def setup(self, stage=None): 

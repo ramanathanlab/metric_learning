@@ -14,18 +14,9 @@ from typing import Dict, List, Any
 from tqdm import tqdm
 from config import BaseConfig, Config
 from utils import plot_embeddings, SVD, get_alignment, get_uniformity
-from dataset import ProxyDataset
+from dataset import ProxyDataset, Metric_Dataset
 from models import MetricNet
 from sklearn.decomposition import TruncatedSVD
-
-cfg = Config.read_yaml('/homes/bhsu/gb_2024/my_gb_files/cerebras/metric_learning/path_to_output_file.yaml')
-
-dataset = ProxyDataset(cfg)
-dataset.setup()
-train_loader = dataset.train_dataloader()
-test_loader = dataset.test_dataloader()
-val_loader = dataset.val_dataloader()
-
     
 class MetricModel(L.LightningModule):
     def __init__(self,
@@ -58,9 +49,14 @@ class MetricModel(L.LightningModule):
         self.total_samples=0 # counter for num_samples for validation
         self.batch_counter=0
 
+        self.alignment_tot=0
+        self.uniformity_tot=0
+
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
         metric_opt.zero_grad()
+
+        X, y = batch  
 
         q, a, p, n = batch # question label, anchor/question, pos/sim_doc, neg/diff_doc
         a_embed = self.model(a)
@@ -83,26 +79,24 @@ class MetricModel(L.LightningModule):
         '''Calculate the accuracies so everything in the enumerate loop
         Get total accuracy and class''' 
         # TODO: get the number of correct triplets in each batch 
-        # aka does the model identify d(a, n) > d(a, p) + margin?
-        q, a, p, n = batch
-        a_embed = self.model(a)
-        p_embed = self.model(p)
-        n_embed = self.model(n)
-        # accuracies = self.accuracy.get_accuracy()
-        dmat_ap = F.pairwise_distance(a_embed, p_embed, p=2) # 2nd norm
-        dmat_an = F.pairwise_distance(a_embed, n_embed, p=2)
-        dmat_diff = dmat_an - dmat_ap - self.margin
-        self.dist_correct += torch.where(dmat_diff>0, 1, 0).sum()
-        self.total_samples += a.size(0) 
-        self.batch_counter += 1
-        print("done")
+        X, y = batch
+        match_y = y.unsqueeze(1)==y.unsqueeze(0)
+        pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
+        pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
+        pos_embed = self.model(pos)
+        anchor_embed = self.model(anchor)
+
+        self.alignment_tot += get_alignment(pos_embed, anchor_embed)
+        self.uniformity_tot += get_uniformity(anchor_embed)
+
 
     def on_validation_epoch_end(self):
         # get all a, p, n
-        q, a, p, n = self.val_dataset[:]
-        umap_labels = np.array([0]*len(self.val_dataset) + [1]*len(self.val_dataset) + [2]*len(self.val_dataset))
-
-        embeddings = torch.cat([a,p,n])
+        half_size = int(len(self.val_dataset)*0.5)
+        X, y = self.val_dataset[:half_size]
+        # umap_labels = np.array([0]*len(self.val_dataset) + [1]*len(self.val_dataset) + [2]*len(self.val_dataset))
+        umap_labels = np.array(y.detach().cpu())
+        embeddings = self.model(X)
         embeddings = embeddings.type_as(next(self.model.parameters()))
         proj_embeddings = self.model(embeddings)
         proj_embeddings = proj_embeddings.detach().cpu().numpy()
@@ -118,10 +112,15 @@ class MetricModel(L.LightningModule):
 
         # calculate alignment and uniformity 
         # for alignment, we need two embeddings that we know are similar aka x and y are positive pairs that we know exist
-        if 
-        alignment = get_alignment(embeddings)
+        match_y = y.unsqueeze(1)==y.unsqueeze(0)
+        pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
+        pos, anchor = X[pos_pairs_idx[0]]
+        pos_embed = self.model(pos)
+        anchor_embed = self.model(anchor)
+
+        alignment = get_alignment(pos_embed, anchor_embed)
         self.log_dict({'Alignment:': alignment}, prog_bar=True)
-        uniformity = get_uniformity(embeddings)
+        uniformity = get_uniformity(anchor_embed)
         self.log_dict({'Uniformity:': uniformity}, prog_bar=True)
 
         # pearsons need gold labels for ranking what 0, 1, 2, 3, 4, 5 in terms of cosine similarity 
@@ -165,6 +164,8 @@ if __name__=="__main__":
     parser.add_argument('--num_epochs', default=15, type=int)
     parser.add_argument('--num_devices', default=1, type=int)
     parser.add_argument('--log_offline', default=True, type=bool)
+    parser.add_argument('--config_path', default='/homes/bhsu/gb_2024/my_gb_files/cerebras/metric_learning/config.yaml', 
+                        type=str)
     args = parser.parse_args()
 
     # constants
@@ -177,23 +178,24 @@ if __name__=="__main__":
           'NCA':losses.NCALoss}
     ACCURACY={'Standard':AccuracyCalculator}
 
-    cfg = Config.read_yaml('/homes/bhsu/gb_2024/my_gb_files/cerebras/metric_learning/path_to_output_file.yaml')
+    cfg = Config.read_yaml(args.config_path)
 
-    proxydata = ProxyDataset(cfg)
-    proxydata.setup()
-    train_loader = proxydata.train_dataloader()
-    test_loader = proxydata.test_dataloader()
-    val_loader = proxydata.val_dataloader()
+    # proxydata = ProxyDataset(cfg)
+    dataset = Metric_Dataset(cfg)
+    dataset.setup()
+    train_loader = dataset.train_dataloader()
+    test_loader = dataset.test_dataloader()
+    val_loader = dataset.val_dataloader()
     
     umapper = umap.UMAP()  
 
     model=MetricModel(cfg, 
-                      proxydata.train_dataset, 
-                      proxydata.val_dataset
+                      dataset.train_dataset, 
+                      dataset.validation_dataset
                       )
 
     wandb_logger = WandbLogger(project="metric_lightning", offline=args.log_offline)
-    trainer = L.Trainer(max_epochs=args.num_epochs, devices=[1], logger=wandb_logger)
+    trainer = L.Trainer(max_epochs=args.num_epochs, devices=[2], logger=wandb_logger)
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 

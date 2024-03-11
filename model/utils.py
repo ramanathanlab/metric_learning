@@ -44,7 +44,6 @@ def get_alignment(x, y, alpha=2):
 def get_uniformity(x, t=2):
     return torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()
 
-
 def plot_embeddings(umap_embeddings:np.array, 
                     labels:np.array,
                     epoch:int) -> wandb.Image:
