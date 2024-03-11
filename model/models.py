@@ -1,7 +1,39 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from pytorch_metric_learning import distances, losses, miners, reducers, testers
+from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim import AdamW
+import matplotlib.pyplot as plt
+# constants
+ACTIVATION={'ReLU':nn.ReLU()}
+OPTIMIZERS={'AdamW':AdamW, 
+            'CosineAnnealing':CosineAnnealingLR}
+MINERS={'None':miners.EmbeddingsAlreadyPackagedAsTriplets()}
+LOSS={'Contrastive':losses.ContrastiveLoss,
+        'NTXent':losses.NTXentLoss,
+        'NCA':losses.NCALoss}
+ACCURACY={'Standard':AccuracyCalculator}
 
+
+class DropoutLayer(nn.Module):
+    def __init__(self, p=0.5):
+        super(DropoutLayer, self).__init__()
+        self.p = p
+
+    def forward(self, x):
+        if self.training:  # Only apply dropout during training
+            batch_size, num_features = x.shape
+            dropout_mask = torch.rand(batch_size, num_features) < self.p
+            while dropout_mask.all(dim=1).any():  # Check if any row in the mask is all False (no dropout applied)
+                # Re-generate mask for rows with no dropout
+                rows_to_adjust = ~dropout_mask.all(dim=1)
+                dropout_mask[rows_to_adjust] = torch.rand(rows_to_adjust.sum(), num_features) < self.p
+            return x * dropout_mask.type_as(x)
+        return x
+
+##### Blocks and Sub-units #####
 class ResidualBlock(nn.Module):
     def __init__(self, input_size:int, hidden_size:int, batch_norm:bool, activation:str):
         super(ResidualBlock, self).__init__()
@@ -11,10 +43,9 @@ class ResidualBlock(nn.Module):
         nn.init.kaiming_normal_(self.fc2.weight)
         self.batch_norm = batch_norm
         self.activation = ACTIVATION[activation]
-        
-        if self.batch_norm:
-            self.bn1 = nn.BatchNorm1d(hidden_size)
-            self.bn2 = nn.BatchNorm1d(input_size)
+        self.bn1 = nn.BatchNorm1d(hidden_size)
+        self.bn2 = nn.BatchNorm1d(input_size)
+        self.drop = DropoutLayer(p=0.3) # set to half 
 
     def forward(self, x):
         residual = x
@@ -22,6 +53,9 @@ class ResidualBlock(nn.Module):
         if self.batch_norm:
             out = self.bn1(out)
         out = self.activation(out)
+
+        out = self.stochastic_dropout(out) # apply dropout here 
+
         out = self.fc2(out)
         if self.batch_norm:
             out = self.bn2(out)
@@ -61,3 +95,4 @@ class MetricNet(nn.Module):
     def forward(self, x): 
         out=self.block(x)
         return out
+    

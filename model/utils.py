@@ -29,6 +29,21 @@ from transformers import (AdamW,AutoConfig,
                           get_linear_schedule_with_warmup)
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+# original implementation: https://github.com/SsnL/align_uniform
+def get_alignment(x, y, alpha=2):
+    """
+    bsz : batch size (number of positive pairs)
+    d   : latent dim
+    x   : Tensor, shape=[bsz, d]
+      latents for one side of positive pairs
+    y   : Tensor, shape=[bsz, d]
+      latents for the other side of positive pairs
+    """
+    return (x - y).norm(p=2, dim=1).pow(alpha).mean()
+
+def get_uniformity(x, t=2):
+    return torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()
+
 
 def plot_embeddings(umap_embeddings:np.array, 
                     labels:np.array,
@@ -43,6 +58,18 @@ def plot_embeddings(umap_embeddings:np.array,
     plt.show()
     wandb_image = wandb.Image(scatter)
     return wandb_image
+
+
+def SVD(features_tensor:torch.tensor):
+    # Step 2: Compute Singular Value Decomposition (SVD)
+    U, S, V = torch.svd(features_tensor)
+    S_normalized = S / S.max()
+    # Step 3: Plot the singular values
+    plt.plot(S_normalized.numpy())
+    plt.title('Singular Value Distribution')
+    plt.xlabel('Singular Value Index')
+    plt.ylabel('Singular Value')
+    return S_normalized, plt
 
 
 def get_most_labels(train_labels:list, 

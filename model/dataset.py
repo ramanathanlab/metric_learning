@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 from config import Config, BaseConfig
 import pandas as pd, numpy as np
+from pyarrow.parquet import ParquetFile
 
 class ProxyDataset(L.LightningDataModule): 
     def __init__(self, 
@@ -55,3 +56,61 @@ class ProxyDataset(L.LightningDataModule):
     
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, drop_last=True)
+    
+
+
+class Metric_Dataset(L.LightningDataModule): 
+    def __init__(self, 
+                 data_path: str, 
+                 num_samples:int, 
+                 train_ratio:float, 
+                 val_ratio:float, 
+                 batch_size:int
+                 ): 
+        super(Metric_Dataset, self).__init__()
+        self.data_path = data_path 
+        self.num_samples = num_samples 
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
+        self.batch_size = batch_size
+        self.num_workers = int(os.cpu_count() * 0.7)
+
+    def setup(self, stage=None): 
+        pf = ParquetFile(self.data_path) 
+        first_rows = next(pf.iter_batches(batch_size = self.num_samples)) 
+        self.data = pa.Table.from_batches([first_rows]).to_pandas() 
+        self.data["embedding"] = self.data["embedding"].apply(lambda x: torch.tensor(x, dtype=torch.float32))
+        self.data["one_label"] = self.data["one_label"].apply(lambda x: torch.tensor(x, dtype=torch.float32))
+        self.features_tensor = torch.stack(tuple(self.data["embedding"].values))
+        self.target_tensor = torch.stack(tuple(self.data["one_label"].values))
+        self.dataset = TensorDataset(self.features_tensor, self.target_tensor)
+        # split into train_val_test ratio sizes
+        total_size = len(self.data)
+        train_size = int(self.train_ratio * total_size)
+        validation_size = int(train_size * self.val_ratio)
+        test_size = total_size - train_size - validation_size
+        self.train_dataset, self.validation_dataset, self.test_dataset = random_split(self.dataset, 
+                                                                                      [train_size, 
+                                                                                       validation_size, 
+                                                                                       test_size])
+        
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, 
+                          shuffle=True, pin_memory=True, num_workers=self.num_workers, drop_last=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.validation_dataset, batch_size=self.batch_size, 
+                          shuffle=False, pin_memory=True, num_workers=self.num_workers, drop_last=True)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, 
+                          shuffle=False, pin_memory=True, num_workers=self.num_workers, drop_last=True)
+    
+    def input_size(self):
+        return self.features_tensor.shape[1]
+    
+    def num_classes(self): 
+        return len(torch.unique(self.target_tensor).tolist())
+    
+    def return_labels(self):
+        return (torch.unique(self.target_tensor)).long().tolist()
