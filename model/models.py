@@ -17,21 +17,21 @@ LOSS={'Contrastive':losses.ContrastiveLoss,
 ACCURACY={'Standard':AccuracyCalculator}
 
 
-class DropoutLayer(nn.Module):
-    def __init__(self, p=0.5):
-        super(DropoutLayer, self).__init__()
-        self.p = p
+# class DropoutLayer(nn.Module):
+#     def __init__(self, p=0.5):
+#         super(DropoutLayer, self).__init__()
+#         self.p = p
 
-    def forward(self, x):
-        if self.training:  # Only apply dropout during training
-            batch_size, num_features = x.shape
-            dropout_mask = torch.rand(batch_size, num_features) < self.p
-            while dropout_mask.all(dim=1).any():  # Check if any row in the mask is all False (no dropout applied)
-                # Re-generate mask for rows with no dropout
-                rows_to_adjust = ~dropout_mask.all(dim=1)
-                dropout_mask[rows_to_adjust] = torch.rand(rows_to_adjust.sum(), num_features) < self.p
-            return x * dropout_mask.type_as(x)
-        return x
+#     def forward(self, x):
+#         if self.training:  # Only apply dropout during training
+#             batch_size, num_features = x.shape
+#             dropout_mask = torch.rand(batch_size, num_features) < self.p
+#             while dropout_mask.all(dim=1).any():  # Check if any row in the mask is all False (no dropout applied)
+#                 # Re-generate mask for rows with no dropout
+#                 rows_to_adjust = ~dropout_mask.all(dim=1)
+#                 dropout_mask[rows_to_adjust] = torch.rand(rows_to_adjust.sum(), num_features) < self.p
+#             return x * dropout_mask.type_as(x)
+#         return x
 
 class ResidualBlock(nn.Module):
     def __init__(self, input_size:int, block_pattern:list,
@@ -42,7 +42,7 @@ class ResidualBlock(nn.Module):
         self.output_size=output_size
         self.activation=activation
         self.batch_norm=batch_norm
-        self.drop=DropoutLayer(p=0.3) # set to half 
+        self.drop=nn.Dropout(p=0.5) # set to half 
         self.block_pattern=block_pattern
 
         all_layers=[]
@@ -54,7 +54,7 @@ class ResidualBlock(nn.Module):
             if self.batch_norm: 
                 bn=nn.BatchNorm1d(hidden_unit)
                 all_layers.append(bn)
-            drop=DropoutLayer(p=0.3) # set to 30% 
+            drop=self.drop 
             all_layers.append(drop)
             self.input_size=hidden_unit
         last_layer=nn.Linear(hidden_unit, self.output_size)
@@ -64,8 +64,8 @@ class ResidualBlock(nn.Module):
         
     def forward(self, x): 
         out = self.block(x)
-        out += x
-        out = self.activation(x)
+        out += x # add residual
+        out = self.activation(out)
         return out
 
 class MetricNet(nn.Module): 

@@ -19,23 +19,16 @@ from models import MetricNet
 from sklearn.decomposition import TruncatedSVD
 
 # import CrossEntropyLoss
+class SimCSE_Loss:
+    def __init__(self, **config): 
+        self.temp=config['temp']
 
-def SimCSE_Loss(temp:int): 
-    temp = 10
-    h = -2*torch.randn(batch_size, 3, feature_dim)+1  # (batch dim, contrastive triplet, features dim)
-    num = torch.exp(F.cosine_similarity(h[:, 0, :], h[:, 1, :], dim=1) / temp)
-
-    norm_hi = torch.sqrt(torch.sum(torch.square(h[:, 0, :]), dim=1))
-    norm_hj_plus = torch.sqrt(torch.sum(torch.square(h[:, 1, :]), dim=1))
-    norm_hj_minus = torch.sqrt(torch.sum(torch.square(h[:, 2, :]), dim=1))
-    sim_denom1 = torch.outer(norm_hi, norm_hj_plus) * temp
-    sim_denom2 = torch.outer(norm_hi, norm_hj_minus) * temp
-    v1 = h[:, 0, :] @ h[:, 1, :].t() / sim_denom1
-    v2 = h[:, 0, :] @ h[:, 2, :].t() / sim_denom2
-    vec_denom = torch.sum(torch.exp(v1) + torch.exp(v2), dim=1)
-    return 
-
-
+    def __call__(self, h, h_plus): 
+        embeddings = torch.cat([h, h_plus], dim=0)
+        cosine_sim = F.cosine_similarity(embeddings.unsqueeze(1), embeddings.unsqueeze(0), dim=2) / self.temp
+        labels = torch.arange(h.size(0)).repeat(2).type_as(h).long()
+        loss = F.cross_entropy(cosine_sim, labels)
+        return loss
     
 class MetricModel(L.LightningModule):
     def __init__(self,
@@ -60,7 +53,7 @@ class MetricModel(L.LightningModule):
 
         self.margin=cfg.margin
         self.miner=MINERS[cfg.mining_name]
-        self.loss_fn=LOSS[cfg.loss_name](**cfg.loss[cfg.loss_name])
+        self.loss_fn=LOSS[cfg.loss_name](**cfg.loss)
         self.accuracy=ACCURACY[cfg.accuracy_name](**cfg.accuracy)
         self.train_dataset=train_dataset
         self.val_dataset=val_dataset
@@ -76,19 +69,10 @@ class MetricModel(L.LightningModule):
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
         metric_opt.zero_grad()
-
         X, y = batch  
-
-        X = model(X)
-
-        # cat all embeddings by batch, and generate their ref indices
-        # from: https://github.com/KevinMusgrave/pytorch-metric-learning/issues/686
-        # embeddings=torch.cat([a_embed, p_embed, n_embed], dim=0)
-
-
-
-        loss = self.loss_fn(embeddings, indices_tuple=(a_idx, p_idx, n_idx)) # loss calculated via embed + corr. idx
-
+        h = self.model(X)
+        h_plus = self.model(X)
+        loss=self.loss_fn(h, h_plus) # 
         self.manual_backward(loss) 
         metric_opt.step()
         self.log_dict({"Metric Loss:": loss}, prog_bar=True)
@@ -205,7 +189,8 @@ if __name__=="__main__":
     MINERS={'None':miners.EmbeddingsAlreadyPackagedAsTriplets()}
     LOSS={'Contrastive':losses.ContrastiveLoss,
           'NTXent':losses.NTXentLoss,
-          'NCA':losses.NCALoss}
+          'NCA':losses.NCALoss, 
+          'SimCSE':SimCSE_Loss}
     ACCURACY={'Standard':AccuracyCalculator}
 
     cfg = Config.read_yaml(args.config_path)
@@ -220,9 +205,9 @@ if __name__=="__main__":
     umapper = umap.UMAP()  
 
     model=MetricModel(cfg, 
-                      dataset.train_dataset, 
-                      dataset.validation_dataset
-                      )
+                    dataset.train_dataset, 
+                    dataset.validation_dataset
+                    )
 
     wandb_logger = WandbLogger(project="metric_lightning", offline=args.log_offline)
     trainer = L.Trainer(max_epochs=args.num_epochs, devices=[2], logger=wandb_logger)
