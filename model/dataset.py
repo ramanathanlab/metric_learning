@@ -69,8 +69,39 @@ class Contrastive_Dataset(L.LightningDataModule):
         self.num_samples=cfg.num_samples
         self.train_ratio=cfg.train_ratio
         self.val_ratio=cfg.val_ratio
+
+    def setup(self, stage=None): 
+        questions=torch.rand(self.num_samples)
+        q_1 = [torch.rand(768) for _ in range(len(questions))]
+        q_2 = [torch.rand(768) for _ in range(len(questions))]
+        data = pd.DataFrame({
+        'questions': questions.numpy(), 
+        'question_1':q_1, 
+        'question_2':q_2
+          })
         
+        q1_tensor = torch.stack(data['question_1'].to_list()) 
+        q2_tensor = torch.stack(data['question_2'].to_list())
+        self.dataset = TensorDataset(questions, q1_tensor, q2_tensor)
+
+        total_size = len(self.dataset)
+        train_size = int(self.train_ratio*total_size)
+        valid_size = int(self.val_ratio*train_size)
+        test_size = total_size - train_size - valid_size
+
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, [train_size, 
+                                                                                                valid_size, 
+                                                                                                test_size])
+        
+    def train_dataloader(self): 
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, drop_last=True)
     
+    def test_dataloader(self): 
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, drop_last=True)
+    
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, drop_last=True)
+
 
 
 class Metric_Dataset(L.LightningDataModule): 

@@ -18,7 +18,6 @@ from dataset import ProxyDataset, Metric_Dataset
 from models import MetricNet
 from sklearn.decomposition import TruncatedSVD
 
-# import CrossEntropyLoss
 class SimCSE_Loss:
     def __init__(self, **config): 
         self.temp=config['temp']
@@ -29,6 +28,18 @@ class SimCSE_Loss:
         labels = torch.arange(h.size(0)).repeat(2).type_as(h).long()
         loss = F.cross_entropy(cosine_sim, labels)
         return loss
+    
+def nt_xent_loss(x, temperature):
+    assert len(x.size()) == 2
+    
+    xcs = F.cosine_similarity(x[None,:,:], x[:,None,:], dim=-1)
+    xcs[torch.eye(x.size(0)).bool()] = float("-inf")
+
+    target = torch.arange(8)
+    target[0::2] += 1
+    target[1::2] -= 1
+    
+    return F.cross_entropy(xcs / temperature, target, reduction="mean")
     
 def get_pos_anchor(X, y): 
     match_y = y.unsqueeze(1)==y.unsqueeze(0)
@@ -91,7 +102,7 @@ class MetricModel(L.LightningModule):
         self.log_dict({'Validation Loss:':loss}, prog_bar=True)
         self.model.eval() # reset to eval mode for other validation metrics
 
-        # generate alignment and uniformity metrics
+        # I do this to get pos/anchor pairs based on index matching
         pos, anchor = get_pos_anchor(X, y)
         pos_embed = self.model(pos)
         anchor_embed = self.model(anchor)
@@ -127,17 +138,8 @@ class MetricModel(L.LightningModule):
         uniformity_avg = torch.mean(torch.stack(self.uniformity_list))
         self.log_dict({'Average Uniformity:': uniformity_avg})
 
-
-        # alignment = get_alignment(pos_embed, anchor_embed)
-        # self.log_dict({'Alignment:': self.alignment_tot/len(self.val_dataset)}, prog_bar=True)
-        # uniformity = get_uniformity(anchor_embed)
-        # self.log_dict({'Uniformity:': self.uniformity_tot/len(self.val_dataset)}, prog_bar=True)
-
-        # self.alignment_tot *= 0
         self.alignment_list=[]
         self.uniformity_list=[]
-        # self.alignment_tot = 0
-        # self.uniformit_tot = 0
 
         # pearsons need gold labels for ranking what 0, 1, 2, 3, 4, 5 in terms of cosine similarity 
         # we need to see if cosing similarity of projected embeddings correlate with ranking of similarity
