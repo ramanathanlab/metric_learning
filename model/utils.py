@@ -39,11 +39,12 @@ def get_alignment(x, y, alpha=2):
     y   : Tensor, shape=[bsz, d]
       latents for the other side of positive pairs
     """
-    return (x - y).norm(p=2, dim=1).pow(alpha).mean()
+    alignment=(x - y).norm(p=2, dim=1).pow(alpha).mean()
+    return alignment
 
-def get_uniformity(x, t=2):
+def get_uniformity(x:torch.tensor, t=2):
+    '''Given batched embeddings of input of [batch, embed_dim], calculate the average alignment of features'''
     sq_pdist = torch.pdist(x, p=2).pow(2) 
-    # torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log().type_as(x)
     uniformity = sq_pdist.mul(-t).exp().mean().log()
     return uniformity
 
@@ -74,6 +75,11 @@ def SVD(features_tensor:torch.tensor):
     wandb_image_svd=wandb.Image(plt)
     return S_normalized, wandb_image_svd
 
+# def plot_alignment()
+
+
+
+#################################### Old functions used in old model; might be useful in the future ######################
 
 def get_most_labels(train_labels:list, 
                     test_labels:list

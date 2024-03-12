@@ -60,6 +60,18 @@ class ProxyDataset(L.LightningDataModule):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, drop_last=True)
     
 
+class Contrastive_Dataset(L.LightningDataModule): 
+    def __init__(self, 
+                 cfg:MetricConfig
+                 ): 
+        super(Contrastive_Dataset, self).__init__()
+        self.data_path=cfg.data_path
+        self.num_samples=cfg.num_samples
+        self.train_ratio=cfg.train_ratio
+        self.val_ratio=cfg.val_ratio
+        
+    
+
 
 class Metric_Dataset(L.LightningDataModule): 
     def __init__(self, 

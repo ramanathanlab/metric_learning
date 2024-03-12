@@ -30,6 +30,12 @@ class SimCSE_Loss:
         loss = F.cross_entropy(cosine_sim, labels)
         return loss
     
+def get_pos_anchor(X, y): 
+    match_y = y.unsqueeze(1)==y.unsqueeze(0)
+    pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
+    pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
+    return pos, anchor
+    
 class MetricModel(L.LightningModule):
     def __init__(self,
                  cfg:Config,
@@ -57,14 +63,9 @@ class MetricModel(L.LightningModule):
         self.accuracy=ACCURACY[cfg.accuracy_name](**cfg.accuracy)
         self.train_dataset=train_dataset
         self.val_dataset=val_dataset
-        self.dist_correct=0 # counter that will be used in validation 
-        self.total_samples=0 # counter for num_samples for validation
-        self.batch_counter=0
 
-        self.alignment_tot = torch.tensor(0)
-        self.alignment = []
-        # self.uniformity_tot = torch.tensor(0)
-        # self.alignment_tot=[]
+        self.alignment_list = []
+        self.uniformity_list = []
 
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
@@ -80,62 +81,61 @@ class MetricModel(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         '''Calculate the accuracies so everything in the enumerate loop
         Get total accuracy and class''' 
-        # TODO: get the number of correct triplets in each batch 
         X, y = batch
-        match_y = y.unsqueeze(1)==y.unsqueeze(0)
-        pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
-        pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
 
+        # calculate validation loss 
+        self.model.train() # need this to activate dropout
+        h = self.model(X)
+        h_plus = self.model(X)
+        loss = self.loss_fn(h, h_plus)
+        self.log_dict({'Validation Loss:':loss}, prog_bar=True)
+        self.model.eval() # reset to eval mode for other validation metrics
+
+        # generate alignment and uniformity metrics
+        pos, anchor = get_pos_anchor(X, y)
         pos_embed = self.model(pos)
         anchor_embed = self.model(anchor)
 
-        self.alignment_tot=self.alignment_tot.type_as(pos_embed)
-        # self.uniformity_tot=self.uniformity_tot.type_as(anchor_embed)
-
-
-        self.alignment.append(get_alignment(pos_embed, anchor_embed))
+        self.alignment_list.append(get_alignment(pos_embed, anchor_embed)) # how well to features of pos pairs align?
+        self.uniformity_list.append(get_uniformity(h)) # h or h_plus okay, we are testing for feature scattering
     
-        self.alignment_tot += get_alignment(pos_embed, anchor_embed)
-        # self.uniformity_tot += get_uniformity(anchor_embed)
-
 
     def on_validation_epoch_end(self):
-        # get all a, p, n
         half_size = int(len(self.val_dataset)*0.5)
         X, y = self.val_dataset[:half_size] # grab half of the dataset
         X = X.type_as(next(self.model.parameters()))
         y = y.type_as(next(self.model.parameters()))
+
+        # plotting UMAP
         # umap_labels = np.array([0]*len(self.val_dataset) + [1]*len(self.val_dataset) + [2]*len(self.val_dataset))
         umap_labels = np.array(y.detach().cpu())
-        # embeddings = self.model(X)
-        # embeddings = embeddings.type_as(next(self.model.parameters()))
-        proj_embeddings = self.model(X)
-        # proj_embeddings = proj_embeddings.detach().cpu().numpy()
-        umap_embeddings = umapper.fit_transform(proj_embeddings.detach().cpu().numpy())
+        h = self.model(X)
+        umap_embeddings = umapper.fit_transform(h.detach().cpu().numpy())
         wandb_image_umap = plot_embeddings(umap_embeddings, umap_labels, self.current_epoch)
         self.logger.experiment.log({f'UMAP-Plot':wandb_image_umap})
 
-        # evaluation metrics
         # SVD plot 
-        svd, wandb_image_svd = SVD(proj_embeddings)
+        svd, wandb_image_svd = SVD(h)
         self.logger.experiment.log({f'SVD-Plot':wandb_image_svd})
         self.log_dict({"SVD Embeddings:": svd}, prog_bar=True)
 
-        # calculate alignment and uniformity 
-        # for alignment, we need two embeddings that we know are similar aka x and y are positive pairs that we know exist
-        # match_y = y.unsqueeze(1)==y.unsqueeze(0)
-        # pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
-        # pos, anchor = X[pos_pairs_idx[0]]
-        # pos_embed = self.model(pos)
-        # anchor_embed = self.model(anchor)
+        # alignment plot 
+        alignment_avg = torch.mean(torch.stack(self.alignment_list))
+        self.log_dict({'Average Alignment:': alignment_avg})
+
+        # uniformity plot 
+        uniformity_avg = torch.mean(torch.stack(self.uniformity_list))
+        self.log_dict({'Average Uniformity:': uniformity_avg})
+
 
         # alignment = get_alignment(pos_embed, anchor_embed)
-        self.log_dict({'Alignment:': self.alignment_tot/len(self.val_dataset)}, prog_bar=True)
+        # self.log_dict({'Alignment:': self.alignment_tot/len(self.val_dataset)}, prog_bar=True)
         # uniformity = get_uniformity(anchor_embed)
         # self.log_dict({'Uniformity:': self.uniformity_tot/len(self.val_dataset)}, prog_bar=True)
 
-        self.alignment_tot *= 0
-        self.alignment=[]
+        # self.alignment_tot *= 0
+        self.alignment_list=[]
+        self.uniformity_list=[]
         # self.alignment_tot = 0
         # self.uniformit_tot = 0
 
@@ -155,10 +155,6 @@ class MetricModel(L.LightningModule):
         # avg_correct=self.dist_correct/self.total_samples*100
         # self.log('val_avg_correct', avg_correct)
         # print(f"Acc of negative pair identification: {avg_correct} %")
-        self.dist_correct=0
-        self.total_samples=0
-        self.batch_counter=0
-        # run 
 
     def configure_optimizers(self):
         metric_optim=self.optimizer
@@ -210,7 +206,7 @@ if __name__=="__main__":
                     )
 
     wandb_logger = WandbLogger(project="metric_lightning", offline=args.log_offline)
-    trainer = L.Trainer(max_epochs=args.num_epochs, devices=[2], logger=wandb_logger)
+    trainer = L.Trainer(max_epochs=args.num_epochs, devices=[3], logger=wandb_logger)
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 
