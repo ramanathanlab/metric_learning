@@ -48,6 +48,16 @@ def get_uniformity(x:torch.tensor, t=2):
     uniformity = sq_pdist.mul(-t).exp().mean().log()
     return uniformity
 
+def plot_embeddings_nolabels(umap_embeddings:np.array,
+                    epoch:int) -> wandb.Image:
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(umap_embeddings[:, 0], umap_embeddings[:, 1], cmap='Spectral', s=5)
+    plt.title(f'UMAP Projection of the Embeddings, Epoch: {epoch}', fontsize=24)
+    plt.show()
+    wandb_image = wandb.Image(scatter)
+    return wandb_image
+    
+
 def plot_embeddings(umap_embeddings:np.array, 
                     labels:np.array,
                     epoch:int) -> wandb.Image:
@@ -57,17 +67,18 @@ def plot_embeddings(umap_embeddings:np.array,
     # cbar.set_ticks(np.array(np.arange(len(np.unique(test_labels)))))
     # cbar.ax.set_yticklabels([v for k, v in label_map.items() if k in test_labels]) # [k for k, v in label_map.items() if v in test_labels]
     plt.title(f'UMAP Projection of the Embeddings, Epoch: {epoch}', fontsize=24)
-    plt.legend(handles=scatter.legend_elements()[0], labels=['Anchor', 'Positive', 'Negative'])
+    # plt.legend(handles=scatter.legend_elements()[0], labels=['Anchor', 'Positive', 'Negative'])
     plt.show()
     wandb_image = wandb.Image(scatter)
     return wandb_image
 
-
 def SVD(features_tensor:torch.tensor):
-    # Step 2: Compute Singular Value Decomposition (SVD)
     U, S, V = torch.svd(features_tensor)
     S_normalized = (S / S.max()).mean()
-    # Step 3: Plot the singular values
+    # we do not know how this is distributed 
+    # min_max spread 
+    # skewness of singular value 
+    # we might have to look at standard deviation 
     plt.plot(S_normalized.cpu().numpy())
     plt.title('Singular Value Distribution')
     plt.xlabel('Singular Value Index')
@@ -75,9 +86,12 @@ def SVD(features_tensor:torch.tensor):
     wandb_image_svd=wandb.Image(plt)
     return S_normalized, wandb_image_svd
 
+def get_pos_anchor(X, y): 
+    match_y = y.unsqueeze(1)==y.unsqueeze(0)
+    pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
+    pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
+    return pos, anchor
 # def plot_alignment()
-
-
 
 #################################### Old functions used in old model; might be useful in the future ######################
 

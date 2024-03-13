@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Any
 from tqdm import tqdm
 from config import BaseConfig, Config
-from utils import plot_embeddings, SVD, get_alignment, get_uniformity
+from utils import plot_embeddings, SVD, get_alignment, get_uniformity, get_pos_anchor
 from dataset import ProxyDataset, Metric_Dataset
 from models import MetricNet
 from sklearn.decomposition import TruncatedSVD
@@ -41,11 +41,6 @@ def nt_xent_loss(x, temperature):
     
     return F.cross_entropy(xcs / temperature, target, reduction="mean")
     
-def get_pos_anchor(X, y): 
-    match_y = y.unsqueeze(1)==y.unsqueeze(0)
-    pos_pairs_idx = match_y.fill_diagonal_(0).nonzero()
-    pos, anchor = X[pos_pairs_idx[0]].unsqueeze(1)
-    return pos, anchor
     
 class MetricModel(L.LightningModule):
     def __init__(self,
