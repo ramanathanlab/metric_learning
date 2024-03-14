@@ -21,9 +21,10 @@ scheduler_name: CosineAnnealing
 scheduler:
   T_max: 5
 margin: 0.2
-loss_name: NTXent
+loss_name: Contrastive
 loss:
-    temperature: 0.5
+    pos_margin: 0
+    neg_margin: 1
 mining_name: None
 accuracy_name: Standard
 accuracy:
