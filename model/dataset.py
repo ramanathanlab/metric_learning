@@ -86,7 +86,7 @@ class Question_Dataset(L.LightningDataModule):
         self.val_ratio=cfg.val_ratio
 
     def setup(self, stage=None): 
-        data=pd.read_csv(self.data_path)
+        data=load_dataset('code_x_glue_cc_clone_detection_big_clone_bench')
 
 
         questions=torch.rand(self.num_samples)
@@ -175,8 +175,9 @@ class Metric_Dataset(L.LightningDataModule):
     
 
 if __name__=="__main__": 
-    data_path = Path('QQP_questions_400k.csv')
-    data=pd.read_csv(data_path)
+    # data_path = Path('QQP_questions_400k.csv')
+    # data=pd.read_csv(data_path)
+    data=load_dataset('code_x_glue_cc_clone_detection_big_clone_bench')
 
 
 

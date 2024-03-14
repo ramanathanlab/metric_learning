@@ -65,6 +65,7 @@ class MetricModel(L.LightningModule):
 
         self.margin=cfg.margin
         self.miner=MINERS[cfg.mining_name]
+        # self.loss_fn=LOSS[cfg.loss_name](**cfg.loss)
         self.loss_fn=LOSS[cfg.loss_name](**cfg.loss)
         self.accuracy=ACCURACY[cfg.accuracy_name](**cfg.accuracy)
         self.train_dataset=train_dataset
@@ -78,7 +79,7 @@ class MetricModel(L.LightningModule):
     def training_step(self, batch, batch_idx):
         metric_opt = self.optimizers()
         metric_opt.zero_grad()
-        # assumptions: 
+        # assumptions: from 
         # - we only compare x1[i] == x2[i] 
         # - 1 is pos, 0 is neg
         # - we do not compare anchors with each other aka no x1[i] with x1[j], i!=j
@@ -89,12 +90,15 @@ class MetricModel(L.LightningModule):
         e1 = self.model(x1)
         e2 = self.model(x2)
 
-        loss = self.loss_fn(e1, labels, idx_tuple, ref_emb=e2, ref_labels=labels)
+        # assumptions: from https://github.com/KevinMusgrave/pytorch-metric-learning/issues/686
+        # q, x1, x2, labels = batch
+        # embeddings = 
+
+        loss = self.loss_fn(e1, indices_tuple=idx_tuple, ref_emb=e2)
         self.manual_backward(loss)
         metric_opt.step()
         self.log_dict({"Training Loss:": loss}, prog_bar=True)
     
-
     def validation_step(self, batch, batch_idx):
         q, x1, x2, labels = batch
         pos_idx = torch.where(labels==1)[0]
@@ -102,7 +106,7 @@ class MetricModel(L.LightningModule):
         idx_tuple = (pos_idx, pos_idx, neg_idx, neg_idx)
         e1 = self.model(x1)
         e2 = self.model(x2)
-        loss = self.loss_fn(e1, labels, idx_tuple, ref_emb=e2, ref_labels=labels)
+        loss = self.loss_fn(e1, indices_tuple=idx_tuple, ref_emb=e2)
         self.log_dict({"Validation Loss:": loss}, prog_bar=True)
 
         e_anchor = e1[pos_idx]
@@ -156,9 +160,6 @@ class MetricModel(L.LightningModule):
 
         uniformity_avg = torch.mean(torch.stack(self.uniformity_list))
         self.log_dict({'Average Uniformity:': uniformity_avg})
-
-
-
 
 
         # # plotting UMAP
@@ -219,7 +220,7 @@ if __name__=="__main__":
                         type=str)
     parser.add_argument('--num_epochs', default=15, type=int)
     parser.add_argument('--num_devices', default=1, type=int)
-    parser.add_argument('--log_offline', default=True, type=bool)
+    parser.add_argument('--log_offline', default=False, type=bool)
     parser.add_argument('--config_path', default='/homes/bhsu/gb_2024/my_gb_files/cerebras/metric_learning/config.yaml', 
                         type=str)
     args = parser.parse_args()
